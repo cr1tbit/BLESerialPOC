@@ -22,6 +22,7 @@
    And txValue is the data to be sent, in this example just a byte incremented every second. 
 */
 
+#include <Arduino.h>
 #include <NimBLEDevice.h>
 
 
@@ -30,10 +31,19 @@ class BLESerial : public BLEServerCallbacks, public BLECharacteristicCallbacks {
     const char *CHARACTERISTIC_UUID_RX = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E";
     const char *CHARACTERISTIC_UUID_TX = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E";
 
+    const int RX_BUF = 100;
+
 public:
     BLESerial(){};
 
     void begin(char* name){
+
+        receiveQueue = xQueueCreate(RX_BUF, sizeof(char));
+        if(receiveQueue == NULL) {
+            Serial.println("This is so sad");
+            Serial.flush();
+        }
+
         BLEDevice::init(name);
 
         // Create the BLE Server
@@ -81,6 +91,42 @@ public:
         }
     }
 
+    bool available(){
+        if (!deviceConnected) {
+            return false;
+        }
+        if(uxQueueMessagesWaiting(receiveQueue) == 0){
+            return false;
+        }
+        return true;
+    }
+
+    String readStringUntil(char c){
+        String s = "";
+        char _c;
+        while(uxQueueMessagesWaiting(receiveQueue) > 0){
+            if (xQueueReceive(receiveQueue, &_c, 0) != pdTRUE) {
+                Serial.println("Failed to receive from queue");
+                return s;
+            }
+            if(_c == c){
+                return s;
+            }
+            s += _c;
+        }
+        return s;
+    }
+
+    void flush(){
+        char _c;
+        while(uxQueueMessagesWaiting(receiveQueue) > 0){
+            if (xQueueReceive(receiveQueue, &_c, 0) != pdTRUE) {
+                Serial.println("Failed to flush lel");
+                return;
+            }
+        }
+    }
+
     void sendTest(){
         static char text[7] = "test0\n";
         static int counter = 0;
@@ -90,9 +136,7 @@ public:
         pTxCharacteristic->notify();
     }
 
-    // int available();
-    // String readStringUntil(char c);
-    // void flush();
+    //
     // void println(String s);
     
     //BLEServerCallbacks
@@ -104,30 +148,29 @@ public:
         deviceConnected = false;
     }
 
-    // uint32_t onPassKeyRequest(){
-    //     Serial.println("Server PassKeyRequest");
-    //     return 123456; 
-    // }
-    // bool onConfirmPIN(uint32_t pass_key){
-    //     Serial.print("The passkey YES/NO number: ");Serial.println(pass_key);
-    //     return true; 
-    // }
-    // void onAuthenticationComplete(ble_gap_conn_desc desc){
-    //     Serial.println("Starting BLE work!");
-    // }
+    /*
+    uint32_t onPassKeyRequest(){
+        Serial.println("Server PassKeyRequest");
+        return 123456; 
+    }
+    bool onConfirmPIN(uint32_t pass_key){
+        Serial.print("The passkey YES/NO number: ");Serial.println(pass_key);
+        return true; 
+    }
+    void onAuthenticationComplete(ble_gap_conn_desc desc){
+        Serial.println("Starting BLE work!");
+    }
+    */
 
     //BLECharacteristicCallbacks
     void onWrite(BLECharacteristic *pCharacteristic) {
         std::string rxValue = pCharacteristic->getValue();
 
         if (rxValue.length() > 0) {
-            Serial.println("*********");
-            Serial.print("Received Value: ");
-            for (int i = 0; i < rxValue.length(); i++)
-            Serial.print(rxValue[i]);
-
-            Serial.println();
-            Serial.println("*********");
+            for (int i = 0; i < rxValue.length(); i++){
+                // Serial.print(rxValue[i]);
+                xQueueSend(receiveQueue, &rxValue[i], 0); //TODO handle full queue
+            }
         }
     }
 
@@ -137,6 +180,8 @@ private:
 
     bool loopTest = false;
     uint8_t txValue = 0;
+
+    QueueHandle_t receiveQueue;
 
     BLEServer *pServer = NULL;
     BLECharacteristic * pTxCharacteristic;

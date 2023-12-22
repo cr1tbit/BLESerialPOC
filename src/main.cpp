@@ -16,5 +16,7 @@ void setup() {
 
 void loop() {
     bleSerial.loop();
-    
+    if (bleSerial.available()) {
+        Serial.println(bleSerial.readStringUntil('\0'));
+    }
 }
